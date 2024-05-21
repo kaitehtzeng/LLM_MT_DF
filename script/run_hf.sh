@@ -1,10 +1,9 @@
-set -e 
+set -e
 cuda_devices=0
 src_file=lyu/floresp-v2.0-rc.2/devtest/devtest.eng_Latn
 ref_file=lyu/floresp-v2.0-rc.2/devtest/devtest.jpn_Jpan
-run_name=llama3-sft-lora-wmt20-23-bi-run2
 
-output_prefix=lyu/MT/output/$run_name
+output_prefix=/home/2/uh02312/lyu/MT/output/llama3-sft-lora-NLLB_COMET_10k-cometkiwi-da-xl-lion-pissa/checkpoint-33/merge
 tgt_file=$output_prefix/devtest.output
 
 python lyu/MT/src/inference_hf.py \
@@ -12,6 +11,7 @@ python lyu/MT/src/inference_hf.py \
     --output_file $tgt_file \
     --model_path $output_prefix \
     --gpu $cuda_devices \
-    --batch_size 16
-    
+    --batch_size 16 \
+    --beam_size 5
+
 bash lyu/MT/src/eval_ja.sh $src_file $ref_file $tgt_file $output_prefix $cuda_devices
