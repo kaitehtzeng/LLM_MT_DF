@@ -1,0 +1,1 @@
+/home/2/uh02312/lyu/llama.cpp/build/bin/main -m /home/2/uh02312/lyu/MT/output/llama3-sft-lora-NLLB_COMET_10k-cometkiwi-da-xl-lion-pissa/checkpoint-33/merge/model_Q4_K_M.gguf --temp 0.0 --top-k 1 -ngl 33 -b 512 -p "###  次の英語のテキストを日本語に翻訳してください：\n英語：\nLLMs Are Here but Not Quite There Yet\n###  日本語：\n"
