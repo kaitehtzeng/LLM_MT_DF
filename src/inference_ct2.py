@@ -34,7 +34,6 @@ def generate_batch(src_lines, tokenizer, model, prefix_tokens):
         input_tokens,
         beam_size=beam_size,
         include_prompt_in_result=False,
-        max_batch_size=300,
         static_prompt=prefix_tokens)
     mt=[]
     for output in outputs:

@@ -8,7 +8,6 @@ parser.add_argument('--index_path', type=str, required=True, help='Path to the R
 parser.add_argument('--index_src', type=str, required=True, help='Path to the src file of the RAG database')
 parser.add_argument('--index_tgt', type=str, required=True, help='Path to the tgt file of the RAG database')
 parser.add_argument('--gpu', type=str, default="0", help='GPU number to use, e.g., "0"')
-parser.add_argument('--beam_size', type=int, default=5)
 parser.add_argument('--batch_size', type=int, default=16)
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -18,7 +17,7 @@ torch.backends.cudnn.benchmark = True
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from llama_cpp import Llama
 from tqdm import tqdm
 
 
@@ -31,7 +30,6 @@ rag_tgt_file=args.index_tgt
 src_file = args.src_file
 output_file = args.output_file
 batch_size=args.batch_size
-beam_size = args.beam_size
 print("Loading index")
 index = faiss.read_index(index_path)
 print("Index loaded")
@@ -39,10 +37,12 @@ print("Loading model")
 model_emb = SentenceTransformer('Alibaba-NLP/gte-large-en-v1.5',cache_folder="/home/2/uh02312/lyu/checkpoints",trust_remote_code=True)
 print("Model loaded")
 model_id = args.model_path
-model=AutoModelForCausalLM.from_pretrained(model_id,torch_dtype=torch.bfloat16,attn_implementation="flash_attention_2", cache_dir="/home/2/uh02312/lyu/checkpoints").cuda()
-tokenizer=AutoTokenizer.from_pretrained(model_id, use_fast=True, cache_dir="/home/2/uh02312/lyu/checkpoints",padding_side='left')
-tokenizer.pad_token = "<|reserved_special_token_250|>"
-tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids("<|reserved_special_token_250|>")
+llm = Llama(
+      model_path=model_id,
+      n_gpu_layers=-1, # Uncomment to use GPU acceleration
+      seed=1337, # Uncomment to set a specific seed
+      n_ctx=2048, # Uncomment to increase the context window
+)
 def read_file(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f.readlines()]
@@ -75,20 +75,10 @@ def get_batch_few_shot_prompt(input_sentences, src_lines, tgt_lines, shot=5):
     return formatted_prompts
     
     
-def generate_translation(input_sentences, tokenizer, model):
-    input_ids = tokenizer(input_sentences, return_tensors="pt", padding=True).to(model.device)
-    outputs = model.generate(
-        **input_ids,
-        max_new_tokens=256,
-        num_beams=beam_size,
-        early_stopping=True,
-        do_sample=False
-    )
-    mt=[]
-    for input_id,output_id in zip(input_ids["input_ids"], outputs):
-        mt.append(output_id[input_id.size(0):])
-    mt = tokenizer.batch_decode(mt, skip_special_tokens=True)
-    return mt
+def generate_translation(input_sentence, model):
+    output = model(input_sentence, max_tokens=256, echo=False,top_k=1, temperature=0.0)
+    output = output['choices'][0]['text']
+    return output.replace("\n", "")
 rag_src_lines = read_file(rag_src_file)
 rag_tgt_lines = read_file(rag_tgt_file)
 src_lines = read_file(src_file)
@@ -98,9 +88,9 @@ print("Creating RAG prompt")
 formatted_prompts = get_batch_few_shot_prompt(src_lines, rag_src_lines, rag_tgt_lines, 5)
 print("Prompt created")
 results=[]
-for i in tqdm(range(0, len(formatted_prompts), batch_size)):
-    batch_mt=generate_translation(formatted_prompts[i:i+batch_size], tokenizer, model)
-    results.extend(batch_mt)
+for i in tqdm(range(len(formatted_prompts))):
+    batch_mt=generate_translation(formatted_prompts[i], llm)
+    results.append(batch_mt)
 
 with open(output_file, "w", encoding="utf-8") as f:
     for line in results:

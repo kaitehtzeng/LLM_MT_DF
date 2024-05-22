@@ -4,6 +4,7 @@ parser = argparse.ArgumentParser(description='Translate English to Japanese')
 parser.add_argument('--src_file', type=str, required=True, help='Path to the src file')
 parser.add_argument('--output_file', type=str, required=True, help='Path to the output file')
 parser.add_argument('--model_path', type=str, required=True, help='Path to the model')
+parser.add_argument('--tokenizer_path', type=str, required=True, help='Path to the tokenizer')
 parser.add_argument('--index_path', type=str, required=True, help='Path to the RAG database')
 parser.add_argument('--index_src', type=str, required=True, help='Path to the src file of the RAG database')
 parser.add_argument('--index_tgt', type=str, required=True, help='Path to the tgt file of the RAG database')
@@ -18,7 +19,8 @@ torch.backends.cudnn.benchmark = True
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer
+import ctranslate2
 from tqdm import tqdm
 
 
@@ -39,8 +41,10 @@ print("Loading model")
 model_emb = SentenceTransformer('Alibaba-NLP/gte-large-en-v1.5',cache_folder="/home/2/uh02312/lyu/checkpoints",trust_remote_code=True)
 print("Model loaded")
 model_id = args.model_path
-model=AutoModelForCausalLM.from_pretrained(model_id,torch_dtype=torch.bfloat16,attn_implementation="flash_attention_2", cache_dir="/home/2/uh02312/lyu/checkpoints").cuda()
-tokenizer=AutoTokenizer.from_pretrained(model_id, use_fast=True, cache_dir="/home/2/uh02312/lyu/checkpoints",padding_side='left')
+tokenizer_path = args.tokenizer_path
+model=ctranslate2.Generator(model_id, device="cuda")
+tokenizer=AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True, cache_dir="/home/2/uh02312/lyu/checkpoints",padding_side='left')
+tokenizer=AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True, cache_dir="/home/2/uh02312/lyu/checkpoints",padding_side='left')
 tokenizer.pad_token = "<|reserved_special_token_250|>"
 tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids("<|reserved_special_token_250|>")
 def read_file(file_path):
@@ -76,19 +80,19 @@ def get_batch_few_shot_prompt(input_sentences, src_lines, tgt_lines, shot=5):
     
     
 def generate_translation(input_sentences, tokenizer, model):
-    input_ids = tokenizer(input_sentences, return_tensors="pt", padding=True).to(model.device)
-    outputs = model.generate(
-        **input_ids,
-        max_new_tokens=256,
-        num_beams=beam_size,
-        early_stopping=True,
-        do_sample=False
-    )
+    input_tokens = []
+    for src in input_sentences:
+        src = tokenizer.encode(src)
+        input_tokens.append(tokenizer.convert_ids_to_tokens(src))
+    outputs = model.generate_batch(
+        input_tokens,
+        beam_size=beam_size,
+        include_prompt_in_result=False)
     mt=[]
-    for input_id,output_id in zip(input_ids["input_ids"], outputs):
-        mt.append(output_id[input_id.size(0):])
-    mt = tokenizer.batch_decode(mt, skip_special_tokens=True)
-    return mt
+    for output in outputs:
+        mt.append(output.sequences_ids[0])
+    outputs = tokenizer.batch_decode(mt, skip_special_tokens=True)
+    return outputs
 rag_src_lines = read_file(rag_src_file)
 rag_tgt_lines = read_file(rag_tgt_file)
 src_lines = read_file(src_file)
