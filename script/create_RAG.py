@@ -17,7 +17,7 @@ def main():
     
     en_texts = []
     print("loading parallel corpus...")
-    with open("/home/2/uh02312/lyu/MT/data/wmt_20-23.en", "r", encoding="utf-8") as fen:
+    with open("/home/2/uh02312/lyu/QEBT/en2ru/wmt15-19.en", "r", encoding="utf-8") as fen:
         for line in fen:
             en_texts.append(line.strip())
     num_texts = len(en_texts)
@@ -38,7 +38,7 @@ def main():
             pbar.set_postfix_str(f"Processed: {i+size_batch}/{num_texts}")
 
     # Step 4: save the index
-    faiss.write_index(index, "/home/2/uh02312/lyu/MT/data/RAG/wmt20-23_en.idx")
+    faiss.write_index(index, "/home/2/uh02312/lyu/QEBT/en2ru/wmt15-19.en.idx")
 
 if __name__ == "__main__":
     main()

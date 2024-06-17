@@ -11,22 +11,17 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+import json
 from tqdm import tqdm
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.benchmark = True
+from prompt_temple import formatting_prompts_func_eval,end_of_prompt
 
 beam_size = args.beam_size
-response_template= "\n###  日本語：\n"
-prefix="###  次の英語のテキストを日本語に翻訳してください：\n英語：\n"
-def create_input(texts, tokenizer):
-    fromatted_texts = []
-    for src in texts:
-        fromatted_texts.append(f"{prefix}{src}{response_template}")
-    input_ids = tokenizer(fromatted_texts, return_tensors="pt", padding=True)
-    return input_ids
+
 
 def generate_batch(src_lines, tokenizer, model):
-    input_ids = create_input(src_lines, tokenizer).to(model.device)
+    input_ids = tokenizer(src_lines, return_tensors="pt", padding=True).to(model.device)
     outputs = model.generate(
         **input_ids,
         max_new_tokens=256,
@@ -50,8 +45,12 @@ tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids("<|reserved_special_tok
 model.generation_config.pad_token_id = tokenizer.pad_token_id
 
 with open(src_file, "r", encoding="utf-8") as f:
-    src_lines = [line.strip() for line in f.readlines()]
-    print("src_lines", len(src_lines))
+    src_file = json.load(f)
+    src_lines = []
+    for line in src_file:
+        src_lines.append(formatting_prompts_func_eval(line))
+        
+    
 
 results=[]
 for i in tqdm(range(0, len(src_lines), batch_size)):
@@ -60,4 +59,4 @@ for i in tqdm(range(0, len(src_lines), batch_size)):
 
 with open(output_file, "w", encoding="utf-8") as f:
     for line in results:
-        f.write(line+"\n")
+        f.write(line.replace("\n", "") + "\n")

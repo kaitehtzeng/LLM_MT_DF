@@ -52,7 +52,7 @@ from contextlib import nullcontext
 TRL_USE_RICH = os.environ.get("TRL_USE_RICH", False)
 
 from trl.commands.cli_utils import init_zero_verbose, SFTScriptArguments, TrlParser
-
+from prompt_temple import formatting_prompts_func,end_of_prompt
 if TRL_USE_RICH:
     init_zero_verbose()
     FORMAT = "%(message)s"
@@ -65,6 +65,7 @@ from datasets import load_dataset
 
 from tqdm.rich import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import random
 
 from trl import (
     ModelConfig,
@@ -77,15 +78,6 @@ from trl import (
     DataCollatorForCompletionOnlyLM,
 )
 tqdm.pandas()
-response_template= "\n###  日本語：\n"
-prefix="###  次の英語のテキストを日本語に翻訳してください：\n英語：\n"
-def formatting_prompts_func(examples):
-    output_texts=[]
-    for src, tgt in zip(examples["src"], examples["tgt"]):
-        text = f"{prefix}{src}{response_template}{tgt}<|end_of_text|>"
-        output_texts.append(text)
-    outputs= {"text": output_texts}
-    return outputs
 
 if TRL_USE_RICH:
     logging.basicConfig(format=FORMAT, datefmt="[%X]", handlers=[RichHandler()], level=logging.INFO)
@@ -124,11 +116,20 @@ if __name__ == "__main__":
     model_id= 'rinna/llama-3-youko-8b'
     model_cache_dir= '/home/2/uh02312/lyu/checkpoints'
     train_file_path=args.dataset_name
-    eval_text_path="lyu/MT/data/flores200_dev.en-ja.json"
+    eval_text_path= '/home/2/uh02312/lyu/MT/data/flores200_dev.en-ja.bi.json'
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
     eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
     eval_dataset = eval_dataset.map(formatting_prompts_func, batched=True)
+    #print random examples
+    random_list = random.sample(range(0, len(train_dataset)), 5)
+    print("Train dataset example: ")
+    for i in random_list:
+        print(train_dataset[i]["text"]+"\n")
+    random_list = random.sample(range(0, len(eval_dataset)), 5)
+    print("Eval dataset example: ")
+    for i in random_list:
+        print(eval_dataset[i]["text"]+"\n")
     print("Train dataset size: ",len(train_dataset))
     print("Eval dataset size: ",len(eval_dataset))
     tokenizer = AutoTokenizer.from_pretrained(model_config.model_name_or_path, use_fast=True, cache_dir=model_cache_dir)
@@ -145,7 +146,9 @@ if __name__ == "__main__":
         if not TRL_USE_RICH
         else console.status(f"[bold green]Training completed! Saving the model to {training_args.output_dir}")
     )
-    response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)[2:] 
+    response_template_ids = tokenizer.encode(end_of_prompt)
+    print("end_of_prompt: ",end_of_prompt)
+    print("end_of_prompt_ids: ",response_template_ids)
     collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
     ################
     # Training

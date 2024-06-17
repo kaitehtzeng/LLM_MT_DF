@@ -17,4 +17,4 @@ python /home/2/uh02312/lyu/MT/src/RAG_hf.py \
     --gpu $cuda_devices \
     --beam_size 1 \
     --batch_size 4
-bash lyu/MT/src/eval_ja.sh $src_file $ref_file $tgt_file $output_prefix $cuda_devices
+bash /home/2/uh02312/lyu/MT/src/eval_ja.sh $src_file $ref_file $tgt_file $output_prefix $cuda_devices

@@ -1,11 +1,9 @@
 set -e 
 cuda_devices=0
-src_file=lyu/floresp-v2.0-rc.2/devtest/devtest.eng_Latn
-ref_file=lyu/floresp-v2.0-rc.2/devtest/devtest.jpn_Jpan
-run_name=llama3-sft-lora-bitextor-8k-lion-pissa
+run_name=llama3-sft-lora-wmt_20-23_en-ja-bi-lion-pissa
 python lyu/MT/src/llama3_trl_sft.py \
     --model_name_or_path rinna/llama-3-youko-8b \
-    --dataset_name /home/2/uh02312/lyu/MT/data/NLLB_bitextor/8K_bitextor.en-ja.json \
+    --dataset_name /home/2/uh02312/lyu/MT/data/wmt_20-23.en-ja.bi.json \
     --learning_rate 1e-4 \
     --max_seq_length 4096 \
     --output_dir lyu/MT/output/$run_name \
