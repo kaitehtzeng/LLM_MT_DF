@@ -61,11 +61,16 @@ if TRL_USE_RICH:
     from rich.logging import RichHandler
 
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, disable_caching
+disable_caching()
 
 from tqdm.rich import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import random
+from unsloth import FastLanguageModel
+max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
+dtype = None # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
+load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
 
 from trl import (
     ModelConfig,
@@ -132,10 +137,28 @@ if __name__ == "__main__":
         print(eval_dataset[i]["text"]+"\n")
     print("Train dataset size: ",len(train_dataset))
     print("Eval dataset size: ",len(eval_dataset))
-    tokenizer = AutoTokenizer.from_pretrained(model_config.model_name_or_path, use_fast=True, cache_dir=model_cache_dir)
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name = model_id,
+        max_seq_length = max_seq_length,
+        dtype = dtype,
+        load_in_4bit = load_in_4bit,
+    )
     tokenizer.pad_token = "<|reserved_special_token_250|>"
     tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids("<|reserved_special_token_250|>")
-    model=AutoModelForCausalLM.from_pretrained(model_id,torch_dtype=torch.bfloat16, cache_dir=model_cache_dir, **model_kwargs).cuda()
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r = 16, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj",],
+        lora_alpha = 16,
+        lora_dropout = 0, # Supports any, but = 0 is optimized
+        bias = "none",    # Supports any, but = "none" is optimized
+        # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
+        use_gradient_checkpointing = "unsloth", # True or "unsloth" for very long context
+        random_state = 3407,
+        use_rslora = False,  # We support rank stabilized LoRA
+        loftq_config = None, # And LoftQ
+    )
 
     ################
     # Optional rich context managers
@@ -146,8 +169,7 @@ if __name__ == "__main__":
         if not TRL_USE_RICH
         else console.status(f"[bold green]Training completed! Saving the model to {training_args.output_dir}")
     )
-    response_template_ids = tokenizer.encode(end_of_prompt)
-    print("end_of_prompt: ",end_of_prompt)
+    response_template_ids = tokenizer.encode("\n######\n")[1:]
     print("end_of_prompt_ids: ",response_template_ids)
     collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
     ################
@@ -160,7 +182,6 @@ if __name__ == "__main__":
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             tokenizer=tokenizer,
-            peft_config=get_peft_config(model_config),
             data_collator=collator,
             dataset_text_field = "text",
             callbacks=[RichProgressCallback] if TRL_USE_RICH else None,
