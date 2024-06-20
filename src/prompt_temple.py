@@ -2,7 +2,7 @@
 
 JA_PROMPT = {
     "prompt": "###  次の{}のテキストを日本語に翻訳してください：\n{}：\n",
-    "response": "\n###  日本語：\n",
+    "response": "\n###  日本語：\n######\n",
     "JA": "日本語",
     "EN": "英語",
     "ZH": "中国語",
@@ -25,7 +25,7 @@ JA_PROMPT = {
 
 EN_PROMPT = {
     "prompt": "###  Please translate the following {} text into English:\n{}:\n",
-    "response": "\n###  English:\n",
+    "response": "\n###  English:\n######\n",
     "JA": "Japanese",
     "ZH": "Chinese",
     "FR": "French",
@@ -46,7 +46,7 @@ EN_PROMPT = {
 
 ZH_PROMPT = {
     "prompt": "###  请将以下的{}文本翻译成中文：\n{}：\n",
-    "response": "\n###  中文：\n",
+    "response": "\n###  中文：\n######\n",
     "EN": "英语",
     "JA": "日语",
     "FR": "法语",
@@ -84,7 +84,7 @@ def formatting_prompts_func(examples):
     output_texts=[]
     for src, tgt,src_lang, tgt_lang in zip(examples["src"], examples["tgt"], examples["src_lang"], examples["tgt_lang"]):
         prefix, response_template = get_prefix_response_template(src_lang, tgt_lang)
-        text = f"{prefix}{src}{response_template}{end_of_prompt}{tgt}<|end_of_text|>"
+        text = f"{prefix}{src}{response_template}{tgt}<|end_of_text|>"
         output_texts.append(text)
     outputs= {"text": output_texts}
     return outputs
@@ -93,5 +93,6 @@ def formatting_prompts_func(examples):
 def formatting_prompts_func_eval(examples):
     src, tgt,src_lang, tgt_lang = (examples["src"], examples["tgt"], examples["src_lang"], examples["tgt_lang"])
     prefix, response_template = get_prefix_response_template(src_lang, tgt_lang)
-    text = f"{prefix}{src}{response_template}{end_of_prompt}"
+    text = f"{prefix}{src}{response_template}"
+    return textfix}{src}{response_template}{end_of_prompt}"
     return text
