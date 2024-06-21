@@ -94,5 +94,4 @@ def formatting_prompts_func_eval(examples):
     src, tgt,src_lang, tgt_lang = (examples["src"], examples["tgt"], examples["src_lang"], examples["tgt_lang"])
     prefix, response_template = get_prefix_response_template(src_lang, tgt_lang)
     text = f"{prefix}{src}{response_template}"
-    return textfix}{src}{response_template}{end_of_prompt}"
     return text
