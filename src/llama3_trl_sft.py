@@ -70,9 +70,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import random
 from unsloth import FastLanguageModel
 max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
-dtype = torch.float16 # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
 load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
-
+dtype = torch.float16
 from trl import (
     ModelConfig,
     RichProgressCallback,
@@ -92,7 +91,7 @@ if TRL_USE_RICH:
 if __name__ == "__main__":
     parser = TrlParser((SFTScriptArguments, SFTConfig, ModelConfig))
     args, training_args, model_config = parser.parse_args_and_config()
-
+    print(training_args)
     # Force use our print callback
     if TRL_USE_RICH:
         training_args.disable_tqdm = True
@@ -176,31 +175,21 @@ if __name__ == "__main__":
     ################
     # Training
     ################
+    #training_args.fp16 = not is_bfloat16_supported(),
+    #training_args.bf16 = is_bfloat16_supported(),
+    print( is_bfloat16_supported())
     with init_context:
         trainer = SFTTrainer(
     model = model,
     tokenizer = tokenizer,
     train_dataset = train_dataset,
+    eval_dataset=eval_dataset,
     dataset_text_field = "text",
     max_seq_length = max_seq_length,
     dataset_num_proc = 2,
     packing = False, # Can make training 5x faster for short sequences.
-    args = TrainingArguments(
-        per_device_train_batch_size = 2,
-        gradient_accumulation_steps = 4,
-        warmup_steps = 5,
-        max_steps = 60,
-        learning_rate = 2e-4,
-        fp16 = not is_bfloat16_supported(),
-        bf16 = is_bfloat16_supported(),
-        logging_steps = 1,
-        optim = "adamw_8bit",
-        weight_decay = 0.01,
-        lr_scheduler_type = "linear",
-        seed = 3407,
-        output_dir = "outputs",
-    ),
-)
+    args = training_args
+    )
 
     trainer.train()
 
