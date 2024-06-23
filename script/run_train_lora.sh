@@ -1,6 +1,7 @@
 set -e 
 cuda_devices=0
 run_name=llama3-sft-lora-wmt_20-23_en-ja-bi-lion-pissa
+wandb disabled
 python ./src/llama3_trl_sft.py \
     --model_name_or_path rinna/llama-3-youko-8b \
     --dataset_name ./data/wmt_20-23.en-ja.bi.json \
