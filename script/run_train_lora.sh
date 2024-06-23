@@ -1,9 +1,9 @@
 set -e 
 cuda_devices=0
 run_name=llama3-sft-lora-wmt_20-23_en-ja-bi-lion-pissa
-python /content/LLM_MT_DF/src/llama3_trl_sft.py \
+python /src/llama3_trl_sft.py \
     --model_name_or_path rinna/llama-3-youko-8b \
-    --dataset_name /content/LLM_MT_DF/data/wmt_20-23.en-ja.bi.json \
+    --dataset_name /data/wmt_20-23.en-ja.bi.json \
     --learning_rate 2e-4 \
     --max_seq_length 4096 \
     --output_dir lyu/MT/output/$run_name \
