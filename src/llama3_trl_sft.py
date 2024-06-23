@@ -121,7 +121,7 @@ if __name__ == "__main__":
     model_id= 'rinna/llama-3-youko-8b'
     model_cache_dir= '/home/2/uh02312/lyu/checkpoints'
     train_file_path=args.dataset_name
-    eval_text_path= '/content/LLM_MT_DF/data/flores200_dev.en-ja.bi.json'
+    eval_text_path= '/data/flores200_dev.en-ja.bi.json'
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
     eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
