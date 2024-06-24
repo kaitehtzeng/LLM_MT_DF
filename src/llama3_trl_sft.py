@@ -183,6 +183,7 @@ if __name__ == "__main__":
     model = model,
     tokenizer = tokenizer,
     train_dataset = train_dataset,
+    data_collator=collator,
     eval_dataset=eval_dataset,
     dataset_text_field = "text",
     max_seq_length = max_seq_length,
