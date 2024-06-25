@@ -30,6 +30,6 @@ python ./src/llama3_trl_sft.py \
     --lora_alpha=16 \
     --fp16=1 \
     --bf16=0 \
-    --max_steps=60\
+    --max_steps= 50\
     --seed 3407\
 
