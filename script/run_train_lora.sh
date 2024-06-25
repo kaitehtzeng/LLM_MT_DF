@@ -6,10 +6,10 @@ python ./src/llama3_trl_sft.py \
     --dataset_name ./data/wmt_20-23.en-ja.bi.json \
     --learning_rate 2e-4 \
     --max_seq_length 4096 \
-    --output_dir lyu/MT/output/$run_name \
+    --output_dir ./output/$run_name \
     --attn_implementation flash_attention_2 \
     --gradient_checkpointing \
-    --logging_dir lyu/MT/output/logs/$run_name \
+    --logging_dir ./output/logs/$run_name \
     --prediction_loss_only \
     --load_best_model_at_end \
     --per_device_train_batch_size=2 \
@@ -20,7 +20,7 @@ python ./src/llama3_trl_sft.py \
     --warmup_steps=5 \
     --lr_scheduler_type="linear" \
     --evaluation_strategy="steps" \
-    --optim="adamw_8bit" \
+    --optim="lion_8bit" \
     --save_steps=1 \
     --logging_steps 1 \
     --group_by_length True \
