@@ -6,10 +6,10 @@ python ./src/llama3_trl_sft.py \
     --dataset_name ./data/wmt_20-23.en-ja.bi.json \
     --learning_rate 2e-4 \
     --max_seq_length 4096 \
-    --output_dir ./output/$run_name \
+    --output_dir /content/gdrive/output/$run_name \
     --attn_implementation flash_attention_2 \
     --gradient_checkpointing \
-    --logging_dir ./output/logs/$run_name \
+    --logging_dir /content/gdrive/output/logs/$run_name \
     --prediction_loss_only \
     --load_best_model_at_end \
     --per_device_train_batch_size=2 \
@@ -28,8 +28,8 @@ python ./src/llama3_trl_sft.py \
     --lora_r=64 \
     --init_lora_weights="pissa" \
     --lora_alpha=16 \
-    --fp16=1 \
-    --bf16=0 \
+    --fp16=0 \
+    --bf16=1 \
     --max_steps=50\
     --seed 3407\
 
