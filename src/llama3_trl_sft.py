@@ -53,14 +53,15 @@ TRL_USE_RICH = os.environ.get("TRL_USE_RICH", False)
 from transformers import TrainingArguments
 from unsloth import is_bfloat16_supported
 from trl.commands.cli_utils import init_zero_verbose, SFTScriptArguments, TrlParser
-from prompt_temple import formatting_prompts_func,end_of_prompt
+from prompt_temple import formatting_prompts_func,end_of_prompt,formatting_prompts_func_eval
 if TRL_USE_RICH:
     init_zero_verbose()
     FORMAT = "%(message)s"
 
     from rich.console import Console
     from rich.logging import RichHandler
-
+from comet import download_model, load_from_checkpoint
+from nltk.translate.bleu_score import corpus_bleu
 import torch
 from datasets import load_dataset, disable_caching
 disable_caching()
@@ -69,9 +70,7 @@ from tqdm.rich import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import random
 from unsloth import FastLanguageModel
-max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
-load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
-dtype = torch.float16
+
 from trl import (
     ModelConfig,
     RichProgressCallback,
@@ -87,10 +86,19 @@ tqdm.pandas()
 if TRL_USE_RICH:
     logging.basicConfig(format=FORMAT, datefmt="[%X]", handlers=[RichHandler()], level=logging.INFO)
 
+import wandb
 
 if __name__ == "__main__":
+    wand.init(project="llma3 tiny-fine-tune")
+    max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
+    load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
+    dtype = torch.float16
     parser = TrlParser((SFTScriptArguments, SFTConfig, ModelConfig))
     args, training_args, model_config = parser.parse_args_and_config()
+    wandb.config.update(vars(args))
+    wandb.config.update(vars(training_args))
+    wandb.config.update(vars(model_config))
+    wandb.config.update({'dtype':torch.float16,'max_seq_length':2048,'load_in_4bit':True})
     print(training_args)
     # Force use our print callback
     if TRL_USE_RICH:
@@ -119,13 +127,14 @@ if __name__ == "__main__":
     # Dataset
     ################
     model_id= 'rinna/llama-3-youko-8b'
-    model_cache_dir= '/home/2/uh02312/lyu/checkpoints'
     train_file_path=args.dataset_name
     eval_text_path= './data/flores200_dev.en-ja.bi.json'
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
-    eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
-    eval_dataset = eval_dataset.map(formatting_prompts_func, batched=True)
+    eval_dataset_tr=load_dataset("json", data_files=eval_text_path)["train"]
+    eval_target = [item['tgt'] for item in eval_dataset]
+    eval_src = [item['src'] for item in eval_dataset]
+    eval_dataset = eval_dataset.map(formatting_prompts_func_eval)
     #print random examples
     random_list = random.sample(range(0, len(train_dataset)), 5)
     print("Train dataset example: ")
@@ -134,7 +143,7 @@ if __name__ == "__main__":
     random_list = random.sample(range(0, len(eval_dataset)), 5)
     print("Eval dataset example: ")
     for i in random_list:
-        print(eval_dataset[i]["text"]+"\n")
+        print(eval_dataset_tr[i]["text"]+"\n")
     print("Train dataset size: ",len(train_dataset))
     print("Eval dataset size: ",len(eval_dataset))
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -159,6 +168,69 @@ if __name__ == "__main__":
         use_rslora = False,  # We support rank stabilized LoRA
         loftq_config = None, # And LoftQ
     )
+    ################
+    #Load Comet
+    ################
+    comet_model_path = download_model("Unbabel/wmt20-comet-da")
+    comet_model = load_from_checkpoint(comet_model_path)
+
+    ################
+    #Evaluation
+    ################
+    def generate_batch(text,model,tokenizer):
+        input_id = tokenizer(text,return_tensors= pt, padding =True).to(model.device)
+        output = model.generate(
+        **input,
+        max_new_tokens=256,
+        num_beams=5,
+        early_stopping=True,
+        do_sample=False)
+        mount = []
+        for input,output_id in zip(input_id['input_ids'],output):
+            mount.append(output_id[input.size(0):])
+        tok = tokenizer.batch_decode(mount, skip_special_tokens=True)
+        return tok
+    
+    def generate_output(dataset,batch_size,model,tokenizer):
+        ans = []
+        for i in range(0,len(dataset),batch_size):
+            batch = generate_batch(data[i:min(len(dataset),i+batch_size)],model,tokenizer)
+            ans.extend(batch)
+        return ans
+    
+    
+    def evaluate_model(model,tokenizer,eval_dataset,eval_src,eval_target):
+        model.eval()
+        result = generate_output(eval_dataset,10,model,tokenizer)
+        result_corpus = [i.split() for i in result]
+        target_corpus = [i.split() for i in eval_target]
+        bleu = bleu_score(result_corpus,target_corpus)
+        #Calculate comet
+        comet_input = [{"src":item['src'],"mt":res,"ref":ref}for item,res,ref in zip(eval_src,results,eval_tag)]
+        comet_score = comet_model.predict(comet_input,batch_size=8,gpus=1)
+        average_comet_score = sum(comet_score)/len(comet_score)
+        return bleu,average_comet_score,result
+    
+    ################
+    # Custom callback for WandB logging
+    ###############
+    class WandbCallback(TrainerCallback):
+        def __init__(self,eval_steps):
+            self.eval_steps=eval_steps
+            self.step_count = 0
+        def on_log(self,args,state,control,logs=None,**kwargs):
+            wandb.log(logs)
+        
+        def on_step_end(self,args,state,control,**kwargs):
+            self.step_count+=1
+            if self.step_count%self.eval_steps==0:
+                bleu_score,comet_score,results = evaluate_model(model,tokenizer,eval_dataset)
+                wandb.log({'step':state.global_step,
+                           'bleu_score':bleu_score,
+                           'comet_score':comet_score,
+                           'examples':wandb.Table(columnS=['Input','Target','Prediction']
+                                       data=[[item['src'],ref,res] for item,res,ref in zip(eval_src,results,eval_tag)]})
+
 
     ################
     # Optional rich context managers
@@ -175,24 +247,32 @@ if __name__ == "__main__":
     ################
     # Training
     ################
-    #training_args.fp16 = not is_bfloat16_supported(),
-    #training_args.bf16 = is_bfloat16_supported(),
-    print( is_bfloat16_supported())
     with init_context:
         trainer = SFTTrainer(
     model = model,
     tokenizer = tokenizer,
     train_dataset = train_dataset,
     data_collator=collator,
-    eval_dataset=eval_dataset,
+    eval_dataset=eval_dataset_tr,
     dataset_text_field = "text",
     max_seq_length = max_seq_length,
     dataset_num_proc = 2,
     packing = False, # Can make training 5x faster for short sequences.
-    args = training_args
+    args = training_args,
+    callbacks=[WandbCallback(10)]
     )
 
     trainer.train()
-
+    wandb.finish()
     with save_context:
         trainer.save_model(training_args.output_dir)
+
+    from huggingface_hub import HfApi
+    api=HfApi()
+    api = HfApi()
+api.upload_folder(
+    folder_path="training_args.output_dir",
+    repo_id="kaitehtzeng/llma_tryout",
+    use_auth_token=True
+)
+
