@@ -229,7 +229,7 @@ if __name__ == "__main__":
                            'bleu_score':bleu_score,
                            'comet_score':comet_score,
                            'examples':wandb.Table(columnS=['Input','Target','Prediction']
-                                       data=[[item['src'],ref,res] for item,res,ref in zip(eval_src,results,eval_tag)]})
+                                       data=[[item['src'],ref,res] for item,res,ref in zip(eval_src,results,eval_tag)])})
 
 
     ################
