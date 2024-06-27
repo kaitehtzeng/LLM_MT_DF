@@ -270,9 +270,9 @@ if __name__ == "__main__":
     from huggingface_hub import HfApi
     api=HfApi()
     api = HfApi()
-api.upload_folder(
+    api.upload_folder(
     folder_path="training_args.output_dir",
     repo_id="kaitehtzeng/llma_tryout",
     use_auth_token=True
-)
+    )
 
