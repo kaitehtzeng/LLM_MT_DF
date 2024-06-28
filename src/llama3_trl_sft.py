@@ -50,7 +50,7 @@ import os
 from contextlib import nullcontext
 
 TRL_USE_RICH = os.environ.get("TRL_USE_RICH", False)
-from transformers import TrainingArguments
+from transformers import TrainingArguments,TrainerCallback
 from unsloth import is_bfloat16_supported
 from trl.commands.cli_utils import init_zero_verbose, SFTScriptArguments, TrlParser
 from prompt_temple import formatting_prompts_func,end_of_prompt,formatting_prompts_func_eval
@@ -90,7 +90,7 @@ if TRL_USE_RICH:
 import wandb
 
 if __name__ == "__main__":
-    wandb.init(project="llma3 tiny-fine-tune")
+    wandb.init(project="tryout")
     max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
     load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
     dtype = torch.float16
@@ -100,7 +100,16 @@ if __name__ == "__main__":
     wandb.config.update(vars(training_args))
     wandb.config.update(vars(model_config))
     wandb.config.update({'dtype':torch.float16,'max_seq_length':2048,'load_in_4bit':True},allow_val_change=True)
-    print(training_args)
+     generate_params = {
+        "max_new_tokens": 256,
+        "num_beams": 5,
+        "early_stopping": True,
+        "do_sample": False,
+    }
+    wandb.config.update(vars(generate_params))
+    
+    
+    
     # Force use our print callback
     if TRL_USE_RICH:
         training_args.disable_tqdm = True
@@ -133,20 +142,18 @@ if __name__ == "__main__":
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
     eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
-    eval_target = [item['tgt'] for item in eval_dataset]
-    eval_src = [item['src'] for item in eval_dataset_tr]
-    eval_dataset = eval_dataset.map(formatting_prompts_func_eval)
+    eval_dataset_tr = eval_dataset.map(formatting_prompts_func)
     #print random examples
     random_list = random.sample(range(0, len(train_dataset)), 5)
     print("Train dataset example: ")
     for i in random_list:
         print(train_dataset[i]["text"]+"\n")
-    random_list = random.sample(range(0, len(eval_dataset)), 5)
+    random_list = random.sample(range(0, len(eval_dataset_tr)), 5)
     print("Eval dataset example: ")
     for i in random_list:
-        print(eval_dataset_tr[i]["text"]+"\n")
+        print(eval_dataset[i]["text"]+"\n")
     print("Train dataset size: ",len(train_dataset))
-    print("Eval dataset size: ",len(eval_dataset))
+    print("Eval dataset size: ",len(eval_dataset_tr))
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name = model_id,
         max_seq_length = max_seq_length,
@@ -178,60 +185,62 @@ if __name__ == "__main__":
     ################
     #Evaluation
     ################
-    def generate_batch(text,model,tokenizer):
-        input_id = tokenizer(text,return_tensors= pt, padding =True).to(model.device)
-        output = model.generate(
-        **input,
-        max_new_tokens=256,
-        num_beams=5,
-        early_stopping=True,
-        do_sample=False)
-        mount = []
-        for input,output_id in zip(input_id['input_ids'],output):
-            mount.append(output_id[input.size(0):])
-        tok = tokenizer.batch_decode(mount, skip_special_tokens=True)
-        return tok
-    
-    def generate_output(dataset,batch_size,model,tokenizer):
-        ans = []
-        for i in range(0,len(dataset),batch_size):
-            batch = generate_batch(data[i:min(len(dataset),i+batch_size)],model,tokenizer)
-            ans.extend(batch)
-        return ans
-    
-    
-    def evaluate_model(model,tokenizer,eval_dataset,eval_src,eval_target):
-        model.eval()
-        result = generate_output(eval_dataset,10,model,tokenizer)
-        result_corpus = [i.split() for i in result]
-        target_corpus = [i.split() for i in eval_target]
-        bleu = bleu_score(result_corpus,target_corpus)
-        #Calculate comet
-        comet_input = [{"src":item['src'],"mt":res,"ref":ref}for item,res,ref in zip(eval_src,result,eval_target)]
-        comet_score = comet_model.predict(comet_input,batch_size=8,gpus=1)
-        average_comet_score = sum(comet_score)/len(comet_score)
-        return bleu,average_comet_score,result
     
     ################
     # Custom callback for WandB logging
     ###############
-    class WandbCallback(TrainerCallback):
-        def __init__(self,eval_steps):
-            self.eval_steps=eval_steps
+    class LLMSampleCB(WandbCallback):
+        def __init__(self, trainer, eval_dataset, num_samples=10, log_model="checkpoint", eval_steps=1000):
+            """A Callback to log samples as wandb.Table during training."""
+            super().__init__()
+            self._log_model = log_model
+            self.eval_dataset = eval_dataset
+            self.model, self.tokenizer = trainer.model, trainer.tokenizer
+            self.eval_steps = eval_steps
             self.step_count = 0
-        def on_log(self,args,state,control,logs=None,**kwargs):
-            wandb.log(logs)
+            self.num_samples = num_samples
         
-        def on_step_end(self,args,state,control,**kwargs):
-            self.step_count+=1
-            if self.step_count%self.eval_steps==0:
-                bleu_score,comet_score,results = evaluate_model(model,tokenizer,eval_dataset)
-                wandb.log({'step':state.global_step,
-                           'bleu_score':bleu_score,
-                           'comet_score':comet_score,
-                           'examples':wandb.Table(columns=['Input','Target','Prediction'],
-                                       data=[[item['src'],ref,res] for item,res,ref in zip(eval_src,results,eval_target)])})
-
+        def on_step_end(self, args, state, control, **kwargs):
+            self.step_count += 1
+            if self.step_count % self.eval_steps == 0:
+                sample_dataset = self.eval_dataset.select(range(self.num_samples))
+                eval_target = [item['tgt'] for item in sample_dataset]
+                eval_src = [item['src'] for item in sample_dataset]
+                sample_dataset = sample_dataset.map(formatting_prompts_func_eval)
+                bleu_score, comet_score, results = self.evaluate_model(eval_src, eval_target)
+                wandb.log({'step': state.global_step,
+                        'bleu_score': bleu_score,
+                        'comet_score': comet_score,
+                        'examples': wandb.Table(columns=['Input', 'Target', 'Prediction'],
+                                                data=[[item['src'], ref, res] for item, res, ref in zip(eval_src, results, eval_target)])})
+        
+        def generate_batch(self, text):
+            input_ids = self.tokenizer(text, return_tensors="pt", padding=True).to(self.model.device)
+            generate_params = {}  # Define your generate_params
+            output = self.model.generate(input_ids, **generate_params)
+            mount = []
+            for input_id, output_id in zip(input_ids['input_ids'], output):
+                mount.append(output_id[input_id.size(0):])
+            tok = self.tokenizer.batch_decode(mount, skip_special_tokens=True)
+            return tok
+        
+        def generate_output(self, data, batch_size):
+            ans = []
+            for i in range(0, len(data), batch_size):
+                batch = self.generate_batch(data[i:min(len(data), i + batch_size)])
+                ans.extend(batch)
+            return ans
+        
+        def evaluate_model(self, eval_src, eval_target):
+            result = self.generate_output(eval_src, 10)
+            result_corpus = [i.split() for i in result]
+            target_corpus = [i.split() for i in eval_target]
+            bleu = bleu_score(result_corpus, target_corpus)
+            # Calculate comet
+            comet_input = [{"src": src, "mt": res, "ref": ref} for src, res, ref in zip(eval_src, result, eval_target)]
+            comet_score = comet_model.predict(comet_input, batch_size=8, gpus=1)
+            average_comet_score = sum(comet_score) / len(comet_score)
+            return bleu, average_comet_score, result
 
     ################
     # Optional rich context managers
@@ -249,20 +258,22 @@ if __name__ == "__main__":
     # Training
     ################
     with init_context:
+        
         trainer = SFTTrainer(
     model = model,
     tokenizer = tokenizer,
     train_dataset = train_dataset,
     data_collator=collator,
-    eval_dataset=eval_dataset,
+    eval_dataset=eval_dataset_tr,
     dataset_text_field = "text",
     max_seq_length = max_seq_length,
     dataset_num_proc = 2,
     packing = False, # Can make training 5x faster for short sequences.
     args = training_args,
-    callbacks=[WandbCallback(10)]
+    callbacks=[RichProgressCallback()]
     )
-
+    wandbcallback = LLMSampletrainer(trainer,eval_dataset, num_samples=10, log_model="checkpoint", eval_steps=10)
+    trainer.add_callback(wandbcallback)
     trainer.train()
     wandb.finish()
     with save_context:
