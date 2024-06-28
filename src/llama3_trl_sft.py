@@ -61,6 +61,7 @@ if TRL_USE_RICH:
     from rich.console import Console
     from rich.logging import RichHandler
 from comet import download_model, load_from_checkpoint
+from torchtext.data.metrics import bleu_score
 from nltk.translate.bleu_score import corpus_bleu
 import torch
 from datasets import load_dataset, disable_caching
@@ -89,7 +90,7 @@ if TRL_USE_RICH:
 import wandb
 
 if __name__ == "__main__":
-    wand.init(project="llma3 tiny-fine-tune")
+    wandb.init(project="llma3 tiny-fine-tune")
     max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
     load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
     dtype = torch.float16
@@ -98,7 +99,7 @@ if __name__ == "__main__":
     wandb.config.update(vars(args))
     wandb.config.update(vars(training_args))
     wandb.config.update(vars(model_config))
-    wandb.config.update({'dtype':torch.float16,'max_seq_length':2048,'load_in_4bit':True})
+    wandb.config.update({'dtype':torch.float16,'max_seq_length':2048,'load_in_4bit':True},allow_val_change=True)
     print(training_args)
     # Force use our print callback
     if TRL_USE_RICH:
@@ -131,9 +132,9 @@ if __name__ == "__main__":
     eval_text_path= './data/flores200_dev.en-ja.bi.json'
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
-    eval_dataset_tr=load_dataset("json", data_files=eval_text_path)["train"]
+    eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
     eval_target = [item['tgt'] for item in eval_dataset]
-    eval_src = [item['src'] for item in eval_dataset]
+    eval_src = [item['src'] for item in eval_dataset_tr]
     eval_dataset = eval_dataset.map(formatting_prompts_func_eval)
     #print random examples
     random_list = random.sample(range(0, len(train_dataset)), 5)
@@ -206,7 +207,7 @@ if __name__ == "__main__":
         target_corpus = [i.split() for i in eval_target]
         bleu = bleu_score(result_corpus,target_corpus)
         #Calculate comet
-        comet_input = [{"src":item['src'],"mt":res,"ref":ref}for item,res,ref in zip(eval_src,results,eval_tag)]
+        comet_input = [{"src":item['src'],"mt":res,"ref":ref}for item,res,ref in zip(eval_src,result,eval_target)]
         comet_score = comet_model.predict(comet_input,batch_size=8,gpus=1)
         average_comet_score = sum(comet_score)/len(comet_score)
         return bleu,average_comet_score,result
@@ -228,8 +229,8 @@ if __name__ == "__main__":
                 wandb.log({'step':state.global_step,
                            'bleu_score':bleu_score,
                            'comet_score':comet_score,
-                           'examples':wandb.Table(columnS=['Input','Target','Prediction']
-                                       data=[[item['src'],ref,res] for item,res,ref in zip(eval_src,results,eval_tag)])})
+                           'examples':wandb.Table(columns=['Input','Target','Prediction'],
+                                       data=[[item['src'],ref,res] for item,res,ref in zip(eval_src,results,eval_target)])})
 
 
     ################
@@ -253,7 +254,7 @@ if __name__ == "__main__":
     tokenizer = tokenizer,
     train_dataset = train_dataset,
     data_collator=collator,
-    eval_dataset=eval_dataset_tr,
+    eval_dataset=eval_dataset,
     dataset_text_field = "text",
     max_seq_length = max_seq_length,
     dataset_num_proc = 2,
