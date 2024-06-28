@@ -189,8 +189,8 @@ if __name__ == "__main__":
     ################
     # Custom callback for WandB logging
     ###############
-    class LLMSampleCB(WandbCallback):
-        def __init__(self, trainer, eval_dataset, num_samples=10, log_model="checkpoint", eval_steps=1000):
+    class LLMCB(WandbCallback):
+        def __init__(self, trainer, eval_dataset, log_model="checkpoint", eval_steps=1000):
             """A Callback to log samples as wandb.Table during training."""
             super().__init__()
             self._log_model = log_model
@@ -198,15 +198,14 @@ if __name__ == "__main__":
             self.model, self.tokenizer = trainer.model, trainer.tokenizer
             self.eval_steps = eval_steps
             self.step_count = 0
-            self.num_samples = num_samples
         
         def on_step_end(self, args, state, control, **kwargs):
             self.step_count += 1
             if self.step_count % self.eval_steps == 0:
-                sample_dataset = self.eval_dataset.select(range(self.num_samples))
-                eval_target = [item['tgt'] for item in sample_dataset]
-                eval_src = [item['src'] for item in sample_dataset]
-                sample_dataset = sample_dataset.map(formatting_prompts_func_eval)
+                eval_target = [item['tgt'] for item in self.eval_dataset]
+                eval_src = [item['src'] for item in self.eval_dataset]
+                self.eval_dataset = self.eval_dataset.map(formatting_prompts_func_eval)
+
                 bleu_score, comet_score, results = self.evaluate_model(eval_src, eval_target)
                 wandb.log({'step': state.global_step,
                         'bleu_score': bleu_score,
@@ -215,7 +214,7 @@ if __name__ == "__main__":
                                                 data=[[item['src'], ref, res] for item, res, ref in zip(eval_src, results, eval_target)])})
         
         def generate_batch(self, text):
-            input_ids = self.tokenizer(text, return_tensors="pt", padding=True).to(self.model.device)
+            input_ids = self.tokenizer(text['text'], return_tensors="pt", padding=True).to(self.model.device)
             generate_params = {}  # Define your generate_params
             output = self.model.generate(input_ids, **generate_params)
             mount = []
@@ -232,7 +231,7 @@ if __name__ == "__main__":
             return ans
         
         def evaluate_model(self, eval_src, eval_target):
-            result = self.generate_output(eval_src, 10)
+            result = self.generate_output(self.eval_dataset, 10)
             result_corpus = [i.split() for i in result]
             target_corpus = [i.split() for i in eval_target]
             bleu = bleu_score(result_corpus, target_corpus)
