@@ -5,13 +5,12 @@ python ./src/llama3_trl_sft.py \
     --model_name_or_path rinna/llama-3-youko-8b \
     --dataset_name ./data/wmt_20-23.en-ja.bi.json \
     --learning_rate 2e-4 \
-    --max_seq_length 4096 \
-    --output_dir /content/gdrive/MyDrive/output/$run_name \
+    --max_seq_length 2048 \
+    --output_dir /content/gdrive/MyDrive/output_first/$run_name \
     --attn_implementation flash_attention_2 \
     --gradient_checkpointing \
-    --logging_dir /content/gdrive/MyDrive/output/logs/$run_name \
+    --logging_dir /content/gdrive/MyDrive/output_first/logs/$run_name \
     --prediction_loss_only \
-    --predict_with_generate\
     --load_best_model_at_end \
     --per_device_train_batch_size=2 \
     --gradient_accumulation_steps=4 \
