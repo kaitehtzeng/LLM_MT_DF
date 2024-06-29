@@ -48,9 +48,10 @@ python examples/scripts/sft.py \
 import logging
 import os
 from contextlib import nullcontext
-
+from torchtext.data.metrics import bleu_score
 TRL_USE_RICH = os.environ.get("TRL_USE_RICH", False)
 from transformers import TrainingArguments,TrainerCallback
+from   transformers.integrations import WandbCallback
 from unsloth import is_bfloat16_supported
 from trl.commands.cli_utils import init_zero_verbose, SFTScriptArguments, TrlParser
 from prompt_temple import formatting_prompts_func,end_of_prompt,formatting_prompts_func_eval
@@ -100,13 +101,13 @@ if __name__ == "__main__":
     wandb.config.update(vars(training_args))
     wandb.config.update(vars(model_config))
     wandb.config.update({'dtype':torch.float16,'max_seq_length':2048,'load_in_4bit':True},allow_val_change=True)
-     generate_params = {
+    generate_params = {
         "max_new_tokens": 256,
         "num_beams": 5,
         "early_stopping": True,
         "do_sample": False,
     }
-    wandb.config.update(vars(generate_params))
+    wandb.config.update(generate_params)
     
     
     
@@ -142,7 +143,7 @@ if __name__ == "__main__":
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
     eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
-    eval_dataset_tr = eval_dataset.map(formatting_prompts_func)
+    eval_dataset_tr = eval_dataset.map(formatting_prompts_func,batched=True)
     #print random examples
     random_list = random.sample(range(0, len(train_dataset)), 5)
     print("Train dataset example: ")
@@ -151,7 +152,7 @@ if __name__ == "__main__":
     random_list = random.sample(range(0, len(eval_dataset_tr)), 5)
     print("Eval dataset example: ")
     for i in random_list:
-        print(eval_dataset[i]["text"]+"\n")
+        print(eval_dataset_tr[i]["text"]+"\n")
     print("Train dataset size: ",len(train_dataset))
     print("Eval dataset size: ",len(eval_dataset_tr))
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -215,8 +216,7 @@ if __name__ == "__main__":
         
         def generate_batch(self, text):
             input_ids = self.tokenizer(text['text'], return_tensors="pt", padding=True).to(self.model.device)
-            generate_params = {}  # Define your generate_params
-            output = self.model.generate(input_ids, **generate_params)
+            output = self.model.generate(input_ids, **generate_params,use_cache = True)
             mount = []
             for input_id, output_id in zip(input_ids['input_ids'], output):
                 mount.append(output_id[input_id.size(0):])
@@ -271,7 +271,7 @@ if __name__ == "__main__":
     args = training_args,
     callbacks=[RichProgressCallback()]
     )
-    wandbcallback = LLMSampletrainer(trainer,eval_dataset, num_samples=10, log_model="checkpoint", eval_steps=10)
+    wandbcallback = LLMCB(trainer,eval_dataset, log_model="checkpoint", eval_steps=1)
     trainer.add_callback(wandbcallback)
     trainer.train()
     wandb.finish()
