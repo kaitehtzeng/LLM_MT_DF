@@ -66,6 +66,8 @@ from torchtext.data.metrics import bleu_score
 from nltk.translate.bleu_score import corpus_bleu
 import torch
 from datasets import load_dataset, disable_caching
+from evaluate import load
+import evaluate
 disable_caching()
 
 from tqdm.rich import tqdm
@@ -186,60 +188,32 @@ if __name__ == "__main__":
     ################
     #Evaluation
     ################
+    from evaluate import load
+    bleau = evaluate.load('bleu')
+    comet_metric = load('comet')
+    def preprocess_logits_for_metrics(logits,labels):
+        if isinstance(logits,tuple):
+            logits = logits[0]
+        return logits.argmax(dim=-1)
     
-    ################
-    # Custom callback for WandB logging
-    ###############
-    class LLMCB(WandbCallback):
-        def __init__(self, trainer, eval_dataset, log_model="checkpoint", eval_steps=1000):
-            """A Callback to log samples as wandb.Table during training."""
-            super().__init__()
-            self._log_model = log_model
-            self.eval_dataset = eval_dataset
-            self.model, self.tokenizer = trainer.model, trainer.tokenizer
-            self.eval_steps = eval_steps
-            self.step_count = 0
-        
-        def on_step_end(self, args, state, control, **kwargs):
-            self.step_count += 1
-            if self.step_count % self.eval_steps == 0:
-                eval_target = [item['tgt'] for item in self.eval_dataset]
-                eval_src = [item['src'] for item in self.eval_dataset]
-                self.eval_dataset = self.eval_dataset.map(formatting_prompts_func_eval)
+    def compute_metrics(eval_preds):
+        preds,labels = eval_preds
+        labels= labels[:,1:]
+        preds = preds[:,:-1]
+        labels[mask]= tokenizer
+        mask = labels == -100
 
-                bleu_score, comet_score, results = self.evaluate_model(eval_src, eval_target)
-                wandb.log({'step': state.global_step,
-                        'bleu_score': bleu_score,
-                        'comet_score': comet_score,
-                        'examples': wandb.Table(columns=['Input', 'Target', 'Prediction'],
-                                                data=[[item['src'], ref, res] for item, res, ref in zip(eval_src, results, eval_target)])})
-        
-        def generate_batch(self, text):
-            input_ids = self.tokenizer(text['text'], return_tensors="pt", padding=True).to(self.model.device)
-            output = self.model.generate(input_ids, **generate_params,use_cache = True)
-            mount = []
-            for input_id, output_id in zip(input_ids['input_ids'], output):
-                mount.append(output_id[input_id.size(0):])
-            tok = self.tokenizer.batch_decode(mount, skip_special_tokens=True)
-            return tok
-        
-        def generate_output(self, data, batch_size):
-            ans = []
-            for i in range(0, len(data), batch_size):
-                batch = self.generate_batch(data[i:min(len(data), i + batch_size)])
-                ans.extend(batch)
-            return ans
-        
-        def evaluate_model(self, eval_src, eval_target):
-            result = self.generate_output(self.eval_dataset, 10)
-            result_corpus = [i.split() for i in result]
-            target_corpus = [i.split() for i in eval_target]
-            bleu = bleu_score(result_corpus, target_corpus)
-            # Calculate comet
-            comet_input = [{"src": src, "mt": res, "ref": ref} for src, res, ref in zip(eval_src, result, eval_target)]
-            comet_score = comet_model.predict(comet_input, batch_size=8, gpus=1)
-            average_comet_score = sum(comet_score) / len(comet_score)
-            return bleu, average_comet_score, result
+        labels[mask]=tokenizer.pad_token_id
+        preds[mask]=tokenizer.pad_token_id
+
+        d_labels = tokenizer.batch_decode(labels,skip_special_tokens=True)
+        d_preds = tokenizer.batch_decode(preds,skip_special_tokens=True)
+        bleu_score = bleu.compute(predictions=d_preds, references= d_labels)
+        comet_score = comet_metric.compute(predictions = d_preds,references = d_labels)
+
+        return {**bleu_score,**comet_score}
+
+
 
     ################
     # Optional rich context managers
@@ -269,10 +243,8 @@ if __name__ == "__main__":
     dataset_num_proc = 2,
     packing = False, # Can make training 5x faster for short sequences.
     args = training_args,
-    callbacks=[RichProgressCallback()]
+    compute_metrics=compute_metrics
     )
-    wandbcallback = LLMCB(trainer,eval_dataset, log_model="checkpoint", eval_steps=1)
-    trainer.add_callback(wandbcallback)
     trainer.train()
     wandb.finish()
     with save_context:
@@ -283,7 +255,7 @@ if __name__ == "__main__":
     api = HfApi()
     api.upload_folder(
     folder_path="training_args.output_dir",
-    repo_id="kaitehtzeng/llma_tryout",
+    repo_id="kaitehtzeng/llma",
     use_auth_token=True
     )
 
