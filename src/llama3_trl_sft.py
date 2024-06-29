@@ -93,7 +93,7 @@ if TRL_USE_RICH:
 import wandb
 
 if __name__ == "__main__":
-    wandb.init(project="tryout")
+    wandb.init(project="first")
     max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
     load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
     dtype = torch.float16
