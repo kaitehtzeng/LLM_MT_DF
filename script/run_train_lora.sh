@@ -10,7 +10,6 @@ python ./src/llama3_trl_sft.py \
     --attn_implementation flash_attention_2 \
     --gradient_checkpointing \
     --logging_dir /content/gdrive/MyDrive/output_first/logs/$run_name \
-    --prediction_loss_only \
     --load_best_model_at_end \
     --per_device_train_batch_size=2 \
     --gradient_accumulation_steps=4 \
