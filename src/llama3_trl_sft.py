@@ -137,14 +137,14 @@ if __name__ == "__main__":
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
     eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
-    eval_dataset_pr = eval_dataset.map(formatting_prompts_func_eval,batched=True)
+    eval_dataset_pr = eval_dataset.map(formatting_prompts_func_eval)
     eval_dataset = eval_dataset.map(formatting_prompts_func,batched=True)
     #print random examples
     random_list = random.sample(range(0, len(train_dataset)), 5)
     print("Train dataset example: ")
     for i in random_list:
         print(train_dataset[i]["text"]+"\n")
-    random_list = random.sample(range(0, len(eval_dataset_tr)), 5)
+    random_list = random.sample(range(0, len(eval_dataset)), 5)
     print("Eval dataset example: ")
     for i in random_list:
         print(eval_dataset[i]["text"]+"\n")
@@ -193,7 +193,6 @@ if __name__ == "__main__":
         preds,labels = eval_preds
         labels= labels[:,1:]
         preds = preds[:,:-1]
-        labels[mask]= tokenizer
         mask = labels == -100
 
         labels[mask]=tokenizer.pad_token_id
@@ -201,10 +200,13 @@ if __name__ == "__main__":
 
         d_labels = tokenizer.batch_decode(labels,skip_special_tokens=True)
         d_preds = tokenizer.batch_decode(preds,skip_special_tokens=True)
-        bleu_score = bleu.compute(predictions=d_preds, references= d_labels)
-        comet_score = comet_metric.compute(predictions = d_preds,references = d_labels)
-
-        return {**bleu_score,**comet_score}
+        bleu_score = bleau.compute(predictions=d_preds, references= d_labels)
+        comet_score = comet_metric.compute(predictions = d_preds,references = d_labels,sources=eval_source)
+        precisions = bleu_score.pop('precisions', [0, 0, 0, 0])
+        for i, precision in enumerate(precisions):
+          bleu_score[f'precision_{i}'] = precision
+        comet_score_avg = comet_score['mean_score']
+        return {**bleu_score,'comet_mean_score':comet_score_avg}
 
     def decode_predictions(tokenizer, predictions):
         labels = tokenizer.batch_decode(predictions.label_ids)
@@ -280,7 +282,7 @@ if __name__ == "__main__":
     tokenizer = tokenizer,
     train_dataset = train_dataset,
     data_collator=collator,
-    eval_dataset=eval_dataset_tr,
+    eval_dataset=eval_dataset,
     dataset_text_field = "text",
     max_seq_length = max_seq_length,
     dataset_num_proc = 2,
@@ -288,12 +290,12 @@ if __name__ == "__main__":
     args = training_args,
     compute_metrics=compute_metrics
     )
-    progress_callback = WandbPredictionProgressCallback(trainer, tokenizer,eval_dataset_pr, 10)
+    progress_callback = WandbPredictionProgressCallback(trainer, tokenizer,eval_dataset_pr, 1)
     trainer.add_callback(progress_callback)
     trainer.train()
     wandb.finish()
     with save_context:
         trainer.save_model(training_args.output_dir)
 
-    trainer.push_to_hub("llama-3-youko-8b-jp-en-bi-tiny-tune")
+    trainer.push_to_hub("llama-3-youko-8b-jp-en-bi-tiny-tune_pre")
     
