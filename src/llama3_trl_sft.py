@@ -48,13 +48,10 @@ python examples/scripts/sft.py \
 import logging
 import os
 from contextlib import nullcontext
-from torchtext.data.metrics import bleu_score
 TRL_USE_RICH = os.environ.get("TRL_USE_RICH", False)
-from transformers import TrainingArguments,TrainerCallback
 from   transformers.integrations import WandbCallback
-from unsloth import is_bfloat16_supported
 from trl.commands.cli_utils import init_zero_verbose, SFTScriptArguments, TrlParser
-from prompt_temple import formatting_prompts_func,end_of_prompt,formatting_prompts_func_eval
+from prompt_temple import formatting_prompts_func,formatting_prompts_func_eval
 if TRL_USE_RICH:
     init_zero_verbose()
     FORMAT = "%(message)s"
@@ -62,8 +59,6 @@ if TRL_USE_RICH:
     from rich.console import Console
     from rich.logging import RichHandler
 from comet import download_model, load_from_checkpoint
-from torchtext.data.metrics import bleu_score
-from nltk.translate.bleu_score import corpus_bleu
 import torch
 from datasets import load_dataset, disable_caching
 from evaluate import load
@@ -71,16 +66,13 @@ import evaluate
 disable_caching()
 
 from tqdm.rich import tqdm
-from transformers import AutoTokenizer, AutoModelForCausalLM
 import random
 from unsloth import FastLanguageModel
 
 from trl import (
     ModelConfig,
-    RichProgressCallback,
     SFTConfig,
     SFTTrainer,
-    get_peft_config,
     get_quantization_config,
     get_kbit_device_map,
     DataCollatorForCompletionOnlyLM,
@@ -145,7 +137,8 @@ if __name__ == "__main__":
     train_dataset=load_dataset("json", data_files=train_file_path)["train"]
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
     eval_dataset=load_dataset("json", data_files=eval_text_path)["train"]
-    eval_dataset_tr = eval_dataset.map(formatting_prompts_func,batched=True)
+    eval_dataset_pr = eval_dataset.map(formatting_prompts_func_eval,batched=True)
+    eval_dataset = eval_dataset.map(formatting_prompts_func,batched=True)
     #print random examples
     random_list = random.sample(range(0, len(train_dataset)), 5)
     print("Train dataset example: ")
@@ -154,9 +147,9 @@ if __name__ == "__main__":
     random_list = random.sample(range(0, len(eval_dataset_tr)), 5)
     print("Eval dataset example: ")
     for i in random_list:
-        print(eval_dataset_tr[i]["text"]+"\n")
+        print(eval_dataset[i]["text"]+"\n")
     print("Train dataset size: ",len(train_dataset))
-    print("Eval dataset size: ",len(eval_dataset_tr))
+    print("Eval dataset size: ",len(eval_dataset))
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name = model_id,
         max_seq_length = max_seq_length,
@@ -213,6 +206,56 @@ if __name__ == "__main__":
 
         return {**bleu_score,**comet_score}
 
+    def decode_predictions(tokenizer, predictions):
+        labels = tokenizer.batch_decode(predictions.label_ids)
+        prediction_text = tokenizer.batch_decode(predictions.predictions.argmax(axis=-1))
+        return {"labels": labels, "predictions": prediction_text}
+
+
+    class WandbPredictionProgressCallback(WandbCallback):
+        """Custom WandbCallback to log model predictions during training.
+
+        This callback logs model predictions and labels to a wandb.Table at each logging step during training.
+        It allows to visualize the model predictions as the training progresses.
+
+        Attributes:
+            trainer (Trainer): The Hugging Face Trainer instance.
+            tokenizer (AutoTokenizer): The tokenizer associated with the model.
+            sample_dataset (Dataset): A subset of the validation dataset for generating predictions.
+            num_samples (int, optional): Number of samples to select from the validation dataset for generating predictions. Defaults to 100.
+        """
+
+        def __init__(self, trainer, tokenizer, val_dataset, num_samples=100, freq=2):
+            """Initializes the WandbPredictionProgressCallback instance.
+
+            Args:
+                trainer (Trainer): The Hugging Face Trainer instance.
+                tokenizer (AutoTokenizer): The tokenizer associated with the model.
+                val_dataset (Dataset): The validation dataset.
+                num_samples (int, optional): Number of samples to select from the validation dataset for generating predictions. Defaults to 100.
+                freq (int, optional): Control the frequency of logging. Defaults to 2.
+            """
+            super().__init__()
+            self.trainer = trainer
+            self.tokenizer = tokenizer
+            self.sample_dataset = val_dataset.select(range(num_samples))
+            self.freq = freq
+
+
+        def on_evaluate(self, args, state, control,  **kwargs):
+            super().on_evaluate(args, state, control, **kwargs)
+            # control the frequency of logging by logging the predictions every `freq` epochs
+            if state.global_step % self.freq == 0:
+            # generate predictions
+                predictions = self.trainer.predict(self.sample_dataset)
+                # decode predictions and labels
+                predictions = decode_predictions(self.tokenizer, predictions)
+                # add predictions to a wandb.Table
+                predictions_df = pd.DataFrame(predictions)
+                predictions_df["Step"] = state.global_step
+                records_table = self._wandb.Table(dataframe=predictions_df)
+                # log the table to wandb
+                self._wandb.log({"sample_predictions": records_table})
 
 
     ################
@@ -245,17 +288,12 @@ if __name__ == "__main__":
     args = training_args,
     compute_metrics=compute_metrics
     )
+    progress_callback = WandbPredictionProgressCallback(trainer, tokenizer,eval_dataset_pr, 10)
+    trainer.add_callback(progress_callback)
     trainer.train()
     wandb.finish()
     with save_context:
         trainer.save_model(training_args.output_dir)
 
-    from huggingface_hub import HfApi
-    api=HfApi()
-    api = HfApi()
-    api.upload_folder(
-    folder_path="training_args.output_dir",
-    repo_id="kaitehtzeng/llma",
-    use_auth_token=True
-    )
-
+    trainer.push_to_hub("llama-3-youko-8b-jp-en-bi-tiny-tune")
+    
